@@ -1,7 +1,6 @@
 package gol
 
 import (
-	"fmt"
 	"math"
 	"strconv"
 	"uk.ac.bris.cs/gameoflife/util"
@@ -16,10 +15,84 @@ type distributorChannels struct {
 	ioInput    <-chan uint8
 }
 
+func worker(world func(x, y int) uint8, sY, eY, sX, eX int, out chan<- [][]uint8, events chan<- Event, p Params) {
+	var newWorld [][]uint8
+	for turn := 0; turn < p.Turns; turn++ {
+		newWorld = gol(world, p.ImageHeight, p.ImageWidth, sY, eY, sX, eX, turn, events)
+		world = makeImmutableWorld(newWorld)
+	}
+	out <- newWorld
+}
+
+func gol(world func(x, y int) uint8, height, width int, sY, eY, sX, eX int, turn int, events chan<- Event) [][]uint8 {
+
+	h := eY - sY
+	w := eX - sX
+
+	newWorld := make([][]uint8, h)
+	for i := 0; i < h; i++ {
+		newWorld[i] = make([]uint8, w)
+	}
+
+	for y := sY; y < eY; y++ {
+		for x := sX; x < eX; x++ {
+			sum := world(int(math.Mod(float64(x+width-1), float64(width))), int(math.Mod(float64(y+height-1), float64(height))))/255 +
+				world(int(math.Mod(float64(x+width), float64(width))), int(math.Mod(float64(y+height-1), float64(height))))/255 +
+				world(int(math.Mod(float64(x+width+1), float64(width))), int(math.Mod(float64(y+height-1), float64(height))))/255 +
+				world(int(math.Mod(float64(x+width-1), float64(width))), int(math.Mod(float64(y+height), float64(height))))/255 +
+				world(int(math.Mod(float64(x+width+1), float64(width))), int(math.Mod(float64(y+height), float64(height))))/255 +
+				world(int(math.Mod(float64(x+width-1), float64(width))), int(math.Mod(float64(y+height+1), float64(height))))/255 +
+				world(int(math.Mod(float64(x+width), float64(width))), int(math.Mod(float64(y+height+1), float64(height))))/255 +
+				world(int(math.Mod(float64(x+width+1), float64(width))), int(math.Mod(float64(y+height+1), float64(height))))/255
+
+			if world(x, y) == 255 { // this cell is alive
+				if sum == 2 || sum == 3 {
+					newWorld[y][x] = 255
+				} else {
+					newWorld[y][x] = 0
+					events <- CellFlipped{
+						CompletedTurns: turn,
+						Cell: util.Cell{
+							X: x,
+							Y: y,
+						},
+					}
+					//fmt.Println("new world ", x, y, " flipped to dead. Turn:", turn)
+				}
+
+			} else { // this cell is dead
+				if sum == 3 {
+					newWorld[y][x] = 255
+					events <- CellFlipped{
+						CompletedTurns: turn,
+						Cell: util.Cell{
+							X: x,
+							Y: y,
+						},
+					}
+					//fmt.Println("new world ", x, y, " flipped to alive. Turn:", turn)
+				} else {
+					newWorld[y][x] = 0
+				}
+
+			}
+		}
+	}
+
+	events <- TurnComplete{CompletedTurns: turn + 1}
+
+	return newWorld
+}
+
+func makeImmutableWorld(w [][]uint8) func(x, y int) uint8 {
+	return func(x, y int) uint8 {
+		return w[y][x]
+	}
+}
+
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels) {
 	// TODO: Create a 2D slice to store the world.
-	fmt.Println("started distributor")
 
 	c.ioCommand <- ioInput
 	c.ioFilename <- strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
@@ -34,69 +107,30 @@ func distributor(p Params, c distributorChannels) {
 
 	c.ioCommand <- ioCheckIdle
 	<-c.ioIdle
-	fmt.Println("loaded world")
 
-	turn := 0
+	// TODO: Start workers and piece together GoL
 
-	// TODO: Execute all turns of the Game of Life.
+	immutableWorld := makeImmutableWorld(world)
+
+	out := make([]chan [][]uint8, p.Threads)
+	for i := range out {
+		out[i] = make(chan [][]uint8)
+	}
+
+	for w := 0; w < p.Threads; w++ {
+		go worker(immutableWorld, w*(p.ImageHeight/p.Threads), (w+1)*(p.ImageHeight/p.Threads), 0, p.ImageWidth, out[w], c.events, p)
+	}
+
 	newWorld := make([][]uint8, p.ImageHeight)
-	for i := 0; i < p.ImageHeight; i++ {
-		newWorld[i] = make([]uint8, p.ImageWidth)
+	for x := 0; x < p.ImageHeight; x++ {
+		newWorld[x] = make([]uint8, p.ImageWidth)
 	}
 
-	if p.Turns == 0 {
-		newWorld = world
-	}
-
-	for ; turn < p.Turns; turn++ {
-
-		for y := 0; y < p.ImageHeight; y++ {
-			for x := 0; x < p.ImageWidth; x++ {
-				sum := world[int(math.Mod(float64(y+p.ImageHeight-1), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth-1), float64(p.ImageWidth)))]/255 +
-					world[int(math.Mod(float64(y+p.ImageHeight-1), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth), float64(p.ImageWidth)))]/255 +
-					world[int(math.Mod(float64(y+p.ImageHeight-1), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth+1), float64(p.ImageWidth)))]/255 +
-					world[int(math.Mod(float64(y+p.ImageHeight), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth-1), float64(p.ImageWidth)))]/255 +
-					world[int(math.Mod(float64(y+p.ImageHeight), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth+1), float64(p.ImageWidth)))]/255 +
-					world[int(math.Mod(float64(y+p.ImageHeight+1), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth-1), float64(p.ImageWidth)))]/255 +
-					world[int(math.Mod(float64(y+p.ImageHeight+1), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth), float64(p.ImageWidth)))]/255 +
-					world[int(math.Mod(float64(y+p.ImageHeight+1), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth+1), float64(p.ImageWidth)))]/255
-
-				if world[y][x] == 255 { // this cell is alive
-					if sum == 2 || sum == 3 {
-						newWorld[y][x] = 255
-					} else {
-						newWorld[y][x] = 0
-						c.events <- CellFlipped{}
-						//fmt.Println("new world ", x, y, " flipped to dead. Turn:", turn)
-					}
-
-				} else { // this cell is dead
-					if sum == 3 {
-						newWorld[y][x] = 255
-						c.events <- CellFlipped{}
-						//fmt.Println("new world ", x, y, " flipped to alive. Turn:", turn)
-					} else {
-						newWorld[y][x] = 0
-					}
-
-				}
-			}
-		}
-
-		c.events <- TurnComplete{}
-		//world = newWorld
-
-		for y := 0; y < p.ImageHeight; y++ {
-			for x := 0; x < p.ImageWidth; x++ {
-				world[y][x] = newWorld[y][x]
-			}
-		}
+	for w := 0; w < p.Threads; w++ {
 
 	}
 
 	// TODO: Report the final state using FinalTurnCompleteEvent.
-	fmt.Println("finished game")
-
 	var alive []util.Cell
 	for y := 0; y < p.ImageHeight; y++ {
 		for x := 0; x < p.ImageWidth; x++ {
@@ -107,7 +141,7 @@ func distributor(p Params, c distributorChannels) {
 	}
 
 	c.events <- FinalTurnComplete{
-		CompletedTurns: turn,
+		CompletedTurns: p.Turns,
 		Alive:          alive,
 	}
 
@@ -124,7 +158,7 @@ func distributor(p Params, c distributorChannels) {
 	c.ioCommand <- ioCheckIdle
 	<-c.ioIdle
 
-	c.events <- StateChange{turn, Quitting}
+	c.events <- StateChange{p.Turns, Quitting}
 	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
 	close(c.events)
 }
