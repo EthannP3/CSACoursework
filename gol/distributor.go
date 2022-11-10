@@ -27,7 +27,6 @@ func distributor(p Params, c distributorChannels) {
 	for i := 0; i < p.ImageHeight; i++ {
 		for j := 0; j < p.ImageWidth; j++ {
 			c.ioCommand <- ioInput
-			fmt.Println("uhh,", c.ioInput)
 			world[i][j] = <-c.ioInput
 			fmt.Println("Maybe", world[i][j])
 		}
