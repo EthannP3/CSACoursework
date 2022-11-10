@@ -3,6 +3,7 @@ package gol
 import (
 	"fmt"
 	"math"
+	"strconv"
 )
 
 type distributorChannels struct {
@@ -20,6 +21,7 @@ func distributor(p Params, c distributorChannels) {
 	fmt.Println("started distributor")
 
 	c.ioCommand <- ioInput
+	c.ioFilename <- strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
 
 	world := make([][]uint8, p.ImageHeight)
 	for i := 0; i < p.ImageHeight; i++ {
@@ -34,24 +36,23 @@ func distributor(p Params, c distributorChannels) {
 	turn := 0
 
 	// TODO: Execute all turns of the Game of Life.
-	newWorld := make([][]int, p.ImageHeight)
+	newWorld := make([][]uint8, p.ImageHeight)
 	for i := 0; i < p.ImageHeight; i++ {
-		newWorld[i] = make([]int, p.ImageWidth)
+		newWorld[i] = make([]uint8, p.ImageWidth)
 	}
 
 	for ; turn < p.Turns; turn++ {
 
 		for y := 0; y < p.ImageHeight; y++ {
 			for x := 0; x < p.ImageWidth; x++ {
-				sum := world[int(math.Mod(float64(y+p.ImageHeight-1), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth-1), float64(p.ImageWidth)))] +
-					world[int(math.Mod(float64(y+p.ImageHeight-1), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth), float64(p.ImageWidth)))] +
-					world[int(math.Mod(float64(y+p.ImageHeight-1), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth+1), float64(p.ImageWidth)))] +
-					world[int(math.Mod(float64(y+p.ImageHeight), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth-1), float64(p.ImageWidth)))] +
-					//
-					world[int(math.Mod(float64(y+p.ImageHeight), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth+1), float64(p.ImageWidth)))] +
-					world[int(math.Mod(float64(y+p.ImageHeight+1), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth-1), float64(p.ImageWidth)))] +
-					world[int(math.Mod(float64(y+p.ImageHeight+1), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth), float64(p.ImageWidth)))] +
-					world[int(math.Mod(float64(y+p.ImageHeight+1), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth+1), float64(p.ImageWidth)))]
+				sum := world[int(math.Mod(float64(y+p.ImageHeight-1), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth-1), float64(p.ImageWidth)))]/255 +
+					world[int(math.Mod(float64(y+p.ImageHeight-1), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth), float64(p.ImageWidth)))]/255 +
+					world[int(math.Mod(float64(y+p.ImageHeight-1), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth+1), float64(p.ImageWidth)))]/255 +
+					world[int(math.Mod(float64(y+p.ImageHeight), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth-1), float64(p.ImageWidth)))]/255 +
+					world[int(math.Mod(float64(y+p.ImageHeight), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth+1), float64(p.ImageWidth)))]/255 +
+					world[int(math.Mod(float64(y+p.ImageHeight+1), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth-1), float64(p.ImageWidth)))]/255 +
+					world[int(math.Mod(float64(y+p.ImageHeight+1), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth), float64(p.ImageWidth)))]/255 +
+					world[int(math.Mod(float64(y+p.ImageHeight+1), float64(p.ImageHeight)))][int(math.Mod(float64(x+p.ImageWidth+1), float64(p.ImageWidth)))]/255
 
 				if world[y][x] == 255 { // this cell is alive
 					if sum == 2 || sum == 3 {
@@ -62,7 +63,6 @@ func distributor(p Params, c distributorChannels) {
 					}
 
 				} else { // this cell is dead
-
 					if sum == 3 {
 						newWorld[y][x] = 255
 						c.events <- CellFlipped{}
@@ -75,11 +75,29 @@ func distributor(p Params, c distributorChannels) {
 		}
 
 		c.events <- TurnComplete{}
+		world = newWorld
 	}
 
 	// TODO: Report the final state using FinalTurnCompleteEvent.
 	fmt.Println("finished game")
+
+	//var alive []util.Cell
+	//for y := 0; y < p.ImageHeight; y++ {
+	//	for x := 0; x < p.ImageWidth; x++ {
+	//		 if newWorld[y][x]==255
+	//	}
+	//}
+
 	c.events <- FinalTurnComplete{}
+
+	c.ioCommand <- ioOutput
+	c.ioFilename <- strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
+
+	for y := 0; y < p.ImageHeight; y++ {
+		for x := 0; x < p.ImageWidth; x++ {
+			c.ioOutput <- newWorld[y][x]
+		}
+	}
 
 	// Make sure that the Io has finished any output before exiting.
 	c.ioCommand <- ioCheckIdle
