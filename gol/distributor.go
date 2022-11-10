@@ -1,6 +1,7 @@
 package gol
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"uk.ac.bris.cs/gameoflife/util"
@@ -26,8 +27,8 @@ func worker(world func(x, y int) uint8, sY, eY, sX, eX int, out chan<- [][]uint8
 
 func gol(world func(x, y int) uint8, height, width int, sY, eY, sX, eX int, turn int, events chan<- Event) [][]uint8 {
 
-	h := eY - sY
-	w := eX - sX
+	h := eY - sY + 1
+	w := eX - sX + 1
 
 	newWorld := make([][]uint8, h)
 	for i := 0; i < h; i++ {
@@ -121,13 +122,16 @@ func distributor(p Params, c distributorChannels) {
 		go worker(immutableWorld, w*(p.ImageHeight/p.Threads), (w+1)*(p.ImageHeight/p.Threads), 0, p.ImageWidth, out[w], c.events, p)
 	}
 
-	newWorld := make([][]uint8, p.ImageHeight)
-	for x := 0; x < p.ImageHeight; x++ {
-		newWorld[x] = make([]uint8, p.ImageWidth)
-	}
+	fmt.Println("Started all workers")
+
+	var newWorld [][]uint8
 
 	for w := 0; w < p.Threads; w++ {
+		newWorld = append(newWorld, <-out[w]...)
+	}
 
+	if p.Turns == 0 {
+		newWorld = world
 	}
 
 	// TODO: Report the final state using FinalTurnCompleteEvent.
