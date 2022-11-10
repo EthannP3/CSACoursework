@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"uk.ac.bris.cs/gameoflife/util"
 )
 
 type distributorChannels struct {
@@ -31,6 +32,8 @@ func distributor(p Params, c distributorChannels) {
 		}
 	}
 
+	c.ioCommand <- ioCheckIdle
+	<-c.ioIdle
 	fmt.Println("loaded world")
 
 	turn := 0
@@ -39,6 +42,10 @@ func distributor(p Params, c distributorChannels) {
 	newWorld := make([][]uint8, p.ImageHeight)
 	for i := 0; i < p.ImageHeight; i++ {
 		newWorld[i] = make([]uint8, p.ImageWidth)
+	}
+
+	if p.Turns == 0 {
+		newWorld = world
 	}
 
 	for ; turn < p.Turns; turn++ {
@@ -60,12 +67,14 @@ func distributor(p Params, c distributorChannels) {
 					} else {
 						newWorld[y][x] = 0
 						c.events <- CellFlipped{}
+						//fmt.Println("new world ", x, y, " flipped to dead. Turn:", turn)
 					}
 
 				} else { // this cell is dead
 					if sum == 3 {
 						newWorld[y][x] = 255
 						c.events <- CellFlipped{}
+						//fmt.Println("new world ", x, y, " flipped to alive. Turn:", turn)
 					} else {
 						newWorld[y][x] = 0
 					}
@@ -75,20 +84,32 @@ func distributor(p Params, c distributorChannels) {
 		}
 
 		c.events <- TurnComplete{}
-		world = newWorld
+		//world = newWorld
+
+		for y := 0; y < p.ImageHeight; y++ {
+			for x := 0; x < p.ImageWidth; x++ {
+				world[y][x] = newWorld[y][x]
+			}
+		}
+
 	}
 
 	// TODO: Report the final state using FinalTurnCompleteEvent.
 	fmt.Println("finished game")
 
-	//var alive []util.Cell
-	//for y := 0; y < p.ImageHeight; y++ {
-	//	for x := 0; x < p.ImageWidth; x++ {
-	//		 if newWorld[y][x]==255
-	//	}
-	//}
+	var alive []util.Cell
+	for y := 0; y < p.ImageHeight; y++ {
+		for x := 0; x < p.ImageWidth; x++ {
+			if newWorld[y][x] == 255 {
+				alive = append(alive, util.Cell{X: x, Y: y})
+			}
+		}
+	}
 
-	c.events <- FinalTurnComplete{}
+	c.events <- FinalTurnComplete{
+		CompletedTurns: turn,
+		Alive:          alive,
+	}
 
 	c.ioCommand <- ioOutput
 	c.ioFilename <- strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
