@@ -118,7 +118,9 @@ func (io *ioState) readPgmImage() {
 	image := []byte(fields[4])
 
 	for _, b := range image {
+		fmt.Println("Hi!", b)
 		io.channels.input <- b
+		fmt.Println("uh,", io.channels.input)
 	}
 
 	fmt.Println("File", filename, "input done!")

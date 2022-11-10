@@ -1,11 +1,9 @@
 package gol
 
 import (
-<<<<<<< HEAD
-	"strconv"
-=======
+	"fmt"
 	"math"
->>>>>>> a1008acbc72f2fe76f574642ad1506c862fdf437
+	"strconv"
 )
 
 type distributorChannels struct {
@@ -20,10 +18,19 @@ type distributorChannels struct {
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels) {
 	// TODO: Create a 2D slice to store the world.
+	c.ioFilename <- strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
 
-	world := make([][]int, p.ImageHeight)
+	world := make([][]uint8, p.ImageHeight)
 	for i := 0; i < p.ImageHeight; i++ {
-		world[i] = make([]int, p.ImageWidth)
+		world[i] = make([]uint8, p.ImageWidth)
+	}
+	for i := 0; i < p.ImageHeight; i++ {
+		for j := 0; j < p.ImageWidth; j++ {
+			c.ioCommand <- ioInput
+			fmt.Println("uhh,", c.ioInput)
+			world[i][j] = <-c.ioInput
+			fmt.Println("Maybe", world[i][j])
+		}
 	}
 
 	turn := 0
@@ -50,8 +57,6 @@ func distributor(p Params, c distributorChannels) {
 
 				if world[y][x] == 255 { // this cell is alive
 
-<<<<<<< HEAD
-=======
 					if sum == 2 || sum == 3 {
 						newWorld[y][x] = 1
 					} else {
@@ -69,21 +74,16 @@ func distributor(p Params, c distributorChannels) {
 				}
 			}
 		}
-
+		turn++
+		c.events <- TurnComplete{turn}
 	}
 
 	// TODO: Report the final state using FinalTurnCompleteEvent.
-
->>>>>>> a1008acbc72f2fe76f574642ad1506c862fdf437
+	c.events <- FinalTurnComplete{}
 	// Make sure that the Io has finished any output before exiting.
 	c.ioCommand <- ioCheckIdle
 	<-c.ioIdle
-
 	c.events <- StateChange{turn, Quitting}
-<<<<<<< HEAD
-
-=======
->>>>>>> a1008acbc72f2fe76f574642ad1506c862fdf437
 	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
 	close(c.events)
 }
