@@ -1,9 +1,9 @@
 package gol
 
 import (
-	"fmt"
 	"math"
 	"strconv"
+	"sync"
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -16,24 +16,12 @@ type distributorChannels struct {
 	ioInput    <-chan uint8
 }
 
-func worker(world func(x, y int) uint8, sY, eY, sX, eX int, out chan<- [][]uint8, events chan<- Event, p Params) {
-	var newWorld [][]uint8
-	for turn := 0; turn < p.Turns; turn++ {
-		newWorld = gol(world, p.ImageHeight, p.ImageWidth, sY, eY, sX, eX, turn, events)
-		world = makeImmutableWorld(newWorld)
-	}
-	out <- newWorld
+func worker(world func(x, y int) uint8, sY, eY, sX, eX int, shared [][]uint8, events chan<- Event, p Params, wg *sync.WaitGroup, turn int) {
+	gol(world, shared, p.ImageHeight, p.ImageWidth, sY, eY, sX, eX, turn, events)
+	wg.Done()
 }
 
-func gol(world func(x, y int) uint8, height, width int, sY, eY, sX, eX int, turn int, events chan<- Event) [][]uint8 {
-
-	h := eY - sY + 1
-	w := eX - sX + 1
-
-	newWorld := make([][]uint8, h)
-	for i := 0; i < h; i++ {
-		newWorld[i] = make([]uint8, w)
-	}
+func gol(world func(x, y int) uint8, sharedWorld [][]uint8, height, width int, sY, eY, sX, eX int, turn int, events chan<- Event) {
 
 	for y := sY; y < eY; y++ {
 		for x := sX; x < eX; x++ {
@@ -48,9 +36,9 @@ func gol(world func(x, y int) uint8, height, width int, sY, eY, sX, eX int, turn
 
 			if world(x, y) == 255 { // this cell is alive
 				if sum == 2 || sum == 3 {
-					newWorld[y][x] = 255
+					sharedWorld[y][x] = 255
 				} else {
-					newWorld[y][x] = 0
+					sharedWorld[y][x] = 0
 					events <- CellFlipped{
 						CompletedTurns: turn,
 						Cell: util.Cell{
@@ -63,7 +51,7 @@ func gol(world func(x, y int) uint8, height, width int, sY, eY, sX, eX int, turn
 
 			} else { // this cell is dead
 				if sum == 3 {
-					newWorld[y][x] = 255
+					sharedWorld[y][x] = 255
 					events <- CellFlipped{
 						CompletedTurns: turn,
 						Cell: util.Cell{
@@ -73,7 +61,7 @@ func gol(world func(x, y int) uint8, height, width int, sY, eY, sX, eX int, turn
 					}
 					//fmt.Println("new world ", x, y, " flipped to alive. Turn:", turn)
 				} else {
-					newWorld[y][x] = 0
+					sharedWorld[y][x] = 0
 				}
 
 			}
@@ -81,13 +69,24 @@ func gol(world func(x, y int) uint8, height, width int, sY, eY, sX, eX int, turn
 	}
 
 	events <- TurnComplete{CompletedTurns: turn + 1}
-
-	return newWorld
 }
 
 func makeImmutableWorld(w [][]uint8) func(x, y int) uint8 {
+	l := len(w)
+
+	iW := make([][]uint8, l)
+	for i := 0; i < l; i++ {
+		iW[i] = make([]uint8, l)
+	}
+
+	for y := 0; y < l; y++ {
+		for x := 0; x < l; x++ {
+			iW[y][x] = w[y][x]
+		}
+	}
+
 	return func(x, y int) uint8 {
-		return w[y][x]
+		return iW[y][x]
 	}
 }
 
@@ -113,32 +112,36 @@ func distributor(p Params, c distributorChannels) {
 
 	immutableWorld := makeImmutableWorld(world)
 
-	out := make([]chan [][]uint8, p.Threads)
-	for i := range out {
-		out[i] = make(chan [][]uint8)
+	sharedWorld := make([][]uint8, p.ImageHeight)
+	for i := 0; i < p.ImageHeight; i++ {
+		sharedWorld[i] = make([]uint8, p.ImageWidth)
 	}
 
-	for w := 0; w < p.Threads; w++ {
-		go worker(immutableWorld, w*(p.ImageHeight/p.Threads), (w+1)*(p.ImageHeight/p.Threads), 0, p.ImageWidth, out[w], c.events, p)
-	}
+	wg := &sync.WaitGroup{}
+	//remainder := int(math.Mod(float64(p.ImageHeight), float64(p.Threads)))
 
-	fmt.Println("Started all workers")
+	for turn := 0; turn < p.Turns; turn++ {
+		wg.Add(p.Threads)
 
-	var newWorld [][]uint8
+		for w := 0; w < p.Threads-1; w++ {
+			go worker(immutableWorld, w*(p.ImageHeight/p.Threads), (w+1)*(p.ImageHeight/p.Threads), 0, p.ImageWidth, sharedWorld, c.events, p, wg, turn)
+		}
+		go worker(immutableWorld, (p.Threads-1)*(p.ImageHeight/p.Threads), p.ImageHeight, 0, p.ImageWidth, sharedWorld, c.events, p, wg, turn)
 
-	for w := 0; w < p.Threads; w++ {
-		newWorld = append(newWorld, <-out[w]...)
+		// block here until done
+		wg.Wait()
+		immutableWorld = makeImmutableWorld(sharedWorld)
 	}
 
 	if p.Turns == 0 {
-		newWorld = world
+		sharedWorld = world
 	}
 
 	// TODO: Report the final state using FinalTurnCompleteEvent.
 	var alive []util.Cell
 	for y := 0; y < p.ImageHeight; y++ {
 		for x := 0; x < p.ImageWidth; x++ {
-			if newWorld[y][x] == 255 {
+			if sharedWorld[y][x] == 255 {
 				alive = append(alive, util.Cell{X: x, Y: y})
 			}
 		}
@@ -154,7 +157,7 @@ func distributor(p Params, c distributorChannels) {
 
 	for y := 0; y < p.ImageHeight; y++ {
 		for x := 0; x < p.ImageWidth; x++ {
-			c.ioOutput <- newWorld[y][x]
+			c.ioOutput <- sharedWorld[y][x]
 		}
 	}
 
