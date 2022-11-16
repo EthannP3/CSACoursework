@@ -1,7 +1,6 @@
 package gol
 
 import (
-	"fmt"
 	"math"
 	"strconv"
 	"sync"
@@ -23,18 +22,17 @@ func worker(world func(x, y int) uint8, sY, eY, sX, eX int, shared [][]uint8, ev
 	wg.Done()
 }
 
-func CountAlive(end chan bool) {
-	for {
-		select {
-		case <-end:
-			fmt.Println("Ended, stopped counting turns.")
-			return
-		default:
-			time.Sleep(2 * time.Second)
-
-			fmt.Println("Completed Turns: ", 1)
+func getAlive(world func(x, y int) uint8, dim int) int {
+	var total = 0
+	for y := 0; y < dim; y++ {
+		for x := 0; x < dim; x++ {
+			if world(x, y) == 255 {
+				total += 1
+			}
 		}
 	}
+	return total
+
 }
 
 func gol(world func(x, y int) uint8, sharedWorld [][]uint8, height, width int, sY, eY, sX, eX int, turn int, events chan<- Event) {
@@ -62,7 +60,6 @@ func gol(world func(x, y int) uint8, sharedWorld [][]uint8, height, width int, s
 							Y: y,
 						},
 					}
-					//fmt.Println("new world ", x, y, " flipped to dead. Turn:", turn)
 				}
 
 			} else { // this cell is dead
@@ -75,7 +72,6 @@ func gol(world func(x, y int) uint8, sharedWorld [][]uint8, height, width int, s
 							Y: y,
 						},
 					}
-					//fmt.Println("new world ", x, y, " flipped to alive. Turn:", turn)
 				} else {
 					sharedWorld[y][x] = 0
 				}
@@ -83,8 +79,6 @@ func gol(world func(x, y int) uint8, sharedWorld [][]uint8, height, width int, s
 			}
 		}
 	}
-
-	events <- TurnComplete{CompletedTurns: turn + 1}
 }
 
 func makeImmutableWorld(w [][]uint8) func(x, y int) uint8 {
@@ -131,11 +125,34 @@ func distributor(p Params, c distributorChannels) {
 	for i := 0; i < p.ImageHeight; i++ {
 		sharedWorld[i] = make([]uint8, p.ImageWidth)
 	}
+
 	exit := make(chan bool)
+	ticker := time.NewTicker(2 * time.Second)
+
+	var turn = 0
+	completedTurns := 0
+
 	wg := &sync.WaitGroup{}
-	//remainder := int(math.Mod(float64(p.ImageHeight), float64(p.Threads)))
-	go CountAlive(exit)
-	for turn := 0; turn < p.Turns; turn++ {
+
+	//go CountAlive(exit)
+	go func() {
+		for {
+			select {
+			case <-exit:
+				return
+			case <-ticker.C:
+				count := getAlive(immutableWorld, p.ImageWidth)
+				turns := completedTurns + 1
+
+				c.events <- AliveCellsCount{
+					CompletedTurns: turns,
+					CellsCount:     count,
+				}
+			}
+		}
+	}()
+
+	for turn = 0; turn < p.Turns; turn++ {
 		wg.Add(p.Threads)
 
 		for w := 0; w < p.Threads-1; w++ {
@@ -146,6 +163,8 @@ func distributor(p Params, c distributorChannels) {
 		// block here until done
 		wg.Wait()
 		immutableWorld = makeImmutableWorld(sharedWorld)
+		completedTurns = turn
+		c.events <- TurnComplete{CompletedTurns: turn + 1}
 	}
 
 	if p.Turns == 0 {
@@ -161,11 +180,14 @@ func distributor(p Params, c distributorChannels) {
 			}
 		}
 	}
-	exit <- true
+
 	c.events <- FinalTurnComplete{
 		CompletedTurns: p.Turns,
 		Alive:          alive,
 	}
+
+	ticker.Stop()
+	exit <- true
 
 	c.ioCommand <- ioOutput
 	c.ioFilename <- strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
