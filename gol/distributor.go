@@ -1,9 +1,11 @@
 package gol
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"sync"
+	"time"
 	"uk.ac.bris.cs/gameoflife/util"
 )
 
@@ -19,6 +21,20 @@ type distributorChannels struct {
 func worker(world func(x, y int) uint8, sY, eY, sX, eX int, shared [][]uint8, events chan<- Event, p Params, wg *sync.WaitGroup, turn int) {
 	gol(world, shared, p.ImageHeight, p.ImageWidth, sY, eY, sX, eX, turn, events)
 	wg.Done()
+}
+
+func CountAlive(end chan bool) {
+	for {
+		select {
+		case <-end:
+			fmt.Println("Ended, stopped counting turns.")
+			return
+		default:
+			time.Sleep(2 * time.Second)
+
+			fmt.Println("Completed Turns: ", 1)
+		}
+	}
 }
 
 func gol(world func(x, y int) uint8, sharedWorld [][]uint8, height, width int, sY, eY, sX, eX int, turn int, events chan<- Event) {
@@ -93,7 +109,6 @@ func makeImmutableWorld(w [][]uint8) func(x, y int) uint8 {
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p Params, c distributorChannels) {
 	// TODO: Create a 2D slice to store the world.
-
 	c.ioCommand <- ioInput
 	c.ioFilename <- strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
 
@@ -116,10 +131,10 @@ func distributor(p Params, c distributorChannels) {
 	for i := 0; i < p.ImageHeight; i++ {
 		sharedWorld[i] = make([]uint8, p.ImageWidth)
 	}
-
+	exit := make(chan bool)
 	wg := &sync.WaitGroup{}
 	//remainder := int(math.Mod(float64(p.ImageHeight), float64(p.Threads)))
-
+	go CountAlive(exit)
 	for turn := 0; turn < p.Turns; turn++ {
 		wg.Add(p.Threads)
 
@@ -146,7 +161,7 @@ func distributor(p Params, c distributorChannels) {
 			}
 		}
 	}
-
+	exit <- true
 	c.events <- FinalTurnComplete{
 		CompletedTurns: p.Turns,
 		Alive:          alive,
