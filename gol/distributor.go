@@ -1,6 +1,7 @@
 package gol
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"sync"
@@ -101,10 +102,15 @@ func makeImmutableWorld(w [][]uint8) func(x, y int) uint8 {
 }
 
 // distributor divides the work between workers and interacts with other goroutines.
-func distributor(p Params, c distributorChannels) {
+func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	// TODO: Create a 2D slice to store the world.
 	c.ioCommand <- ioInput
 	c.ioFilename <- strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
+
+	exit := make(chan bool)
+	ticker := time.NewTicker(2 * time.Second)
+
+	pause := &sync.WaitGroup{}
 
 	world := make([][]uint8, p.ImageHeight)
 	for i := 0; i < p.ImageHeight; i++ {
@@ -127,25 +133,64 @@ func distributor(p Params, c distributorChannels) {
 
 	immutableWorld := makeImmutableWorld(world)
 
+	var turn = 0
+	completedTurns := 0
+
+	go func() {
+		paused := false
+		for {
+			select {
+			case key := <-keyPresses:
+				switch key {
+				case 'p':
+					if paused {
+						pause.Done()
+						pause.Done()
+						ticker.Reset(2 * time.Second)
+
+						paused = false
+						fmt.Println("Continuing")
+					} else {
+						pause.Add(2)
+						ticker.Stop()
+
+						paused = true
+						fmt.Println("Paused")
+					}
+				case 's':
+					// output PGM
+					c.ioCommand <- ioOutput
+					c.ioFilename <- strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight) + "x" + strconv.Itoa(completedTurns)
+
+					for y := 0; y < p.ImageHeight; y++ {
+						for x := 0; x < p.ImageWidth; x++ {
+							c.ioOutput <- immutableWorld(x, y)
+						}
+					}
+					fmt.Println("written")
+				case 'q':
+					p.Turns = completedTurns + 1
+				}
+			}
+		}
+	}()
+
 	sharedWorld := make([][]uint8, p.ImageHeight)
 	for i := 0; i < p.ImageHeight; i++ {
 		sharedWorld[i] = make([]uint8, p.ImageWidth)
 	}
 
-	exit := make(chan bool)
-	ticker := time.NewTicker(2 * time.Second)
-
-	var turn = 0
-	completedTurns := 0
-
 	wg := &sync.WaitGroup{}
 
 	go func() {
 		for {
+
 			select {
 			case <-exit:
 				return
 			case <-ticker.C:
+				pause.Wait()
+
 				count := getAlive(immutableWorld, p.ImageWidth)
 				turns := completedTurns + 1
 
@@ -167,9 +212,13 @@ func distributor(p Params, c distributorChannels) {
 
 		// block here until done
 		wg.Wait()
+
+		pause.Wait()
+
 		immutableWorld = makeImmutableWorld(sharedWorld)
 		completedTurns = turn
 		c.events <- TurnComplete{CompletedTurns: turn + 1}
+
 	}
 
 	if p.Turns == 0 {
