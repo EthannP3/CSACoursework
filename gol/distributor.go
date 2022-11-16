@@ -111,6 +111,12 @@ func distributor(p Params, c distributorChannels) {
 		world[i] = make([]uint8, p.ImageWidth)
 		for j := 0; j < p.ImageWidth; j++ {
 			world[i][j] = <-c.ioInput
+			if world[i][j] == 255 {
+				c.events <- CellFlipped{
+					CompletedTurns: 0,
+					Cell:           util.Cell{X: j, Y: i},
+				}
+			}
 		}
 	}
 
@@ -134,7 +140,6 @@ func distributor(p Params, c distributorChannels) {
 
 	wg := &sync.WaitGroup{}
 
-	//go CountAlive(exit)
 	go func() {
 		for {
 			select {
