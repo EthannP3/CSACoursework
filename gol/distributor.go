@@ -3,6 +3,7 @@ package gol
 import (
 	"fmt"
 	"math"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -150,17 +151,19 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 
 						paused = false
 						fmt.Println("Continuing")
+						c.events <- StateChange{CompletedTurns: completedTurns, NewState: Executing}
 					} else {
 						pause.Add(2)
 						ticker.Stop()
 
 						paused = true
-						fmt.Println("Paused")
+						c.events <- StateChange{CompletedTurns: completedTurns, NewState: Paused}
 					}
-				case 's':
+				case 's', 'q':
 					// output PGM
 					c.ioCommand <- ioOutput
-					c.ioFilename <- strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight) + "x" + strconv.Itoa(completedTurns)
+					filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight) + "x" + strconv.Itoa(completedTurns)
+					c.ioFilename <- filename
 
 					for y := 0; y < p.ImageHeight; y++ {
 						for x := 0; x < p.ImageWidth; x++ {
@@ -168,8 +171,17 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 						}
 					}
 					fmt.Println("written")
-				case 'q':
-					p.Turns = completedTurns + 1
+
+					c.events <- ImageOutputComplete{CompletedTurns: completedTurns, Filename: filename}
+
+					if key == 'q' {
+						c.ioCommand <- ioCheckIdle
+						<-c.ioIdle
+
+						c.events <- StateChange{CompletedTurns: completedTurns, NewState: Quitting}
+
+						os.Exit(0)
+					}
 				}
 			}
 		}
@@ -244,7 +256,8 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	exit <- true
 
 	c.ioCommand <- ioOutput
-	c.ioFilename <- strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight) + "x" + strconv.Itoa(p.Turns)
+	filename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight) + "x" + strconv.Itoa(p.Turns)
+	c.ioFilename <- filename
 
 	for y := 0; y < p.ImageHeight; y++ {
 		for x := 0; x < p.ImageWidth; x++ {
@@ -255,6 +268,8 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 	// Make sure that the Io has finished any output before exiting.
 	c.ioCommand <- ioCheckIdle
 	<-c.ioIdle
+
+	c.events <- ImageOutputComplete{CompletedTurns: p.Turns, Filename: filename}
 
 	c.events <- StateChange{p.Turns, Quitting}
 	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
