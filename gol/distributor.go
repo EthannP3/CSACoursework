@@ -170,7 +170,6 @@ func distributor(p Params, c distributorChannels, keyPresses <-chan rune) {
 							c.ioOutput <- immutableWorld(x, y)
 						}
 					}
-					fmt.Println("written")
 
 					c.events <- ImageOutputComplete{CompletedTurns: completedTurns, Filename: filename}
 
