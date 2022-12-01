@@ -2,23 +2,28 @@ package sdl
 
 import (
 	"fmt"
-	"github.com/ChrisGora/semaphore"
+	_ "github.com/ChrisGora/semaphore"
 	"github.com/veandco/go-sdl2/sdl"
-	"sync"
+	_ "sync"
 	"uk.ac.bris.cs/gameoflife/gol"
 )
 
+func getData[T any](shared gol.SharedData[T]) T {
+	shared.ContentSem.Wait()
+	shared.Mutex.Lock()
+	var d T
+	d, *shared.Value = (*shared.Value)[0], (*shared.Value)[1:]
+	shared.Mutex.Unlock()
+	shared.SpaceSem.Post()
+	return d
+}
+
 func getEvent(h gol.SharedData[gol.Event]) gol.Event {
-	event := gol.getData(h)
+	event := getData(h)
 	return event
 }
 
-func Run(p gol.Params, events []gol.Event, eventSemaphore semaphore.Semaphore, eventMutex *sync.Mutex, keyPresses chan<- rune) {
-	h := EventHandler{
-		events:    events,
-		mutex:     eventMutex,
-		semaphore: eventSemaphore,
-	}
+func Run(p gol.Params, events gol.SharedData[gol.Event], keyPresses chan<- rune) {
 	w := NewWindow(int32(p.ImageWidth), int32(p.ImageHeight))
 
 sdlLoop:
@@ -39,15 +44,10 @@ sdlLoop:
 				}
 			}
 		}
-		if h.semaphore.GetValue() >= 0 {
-			gEvent, ok := getEvent(h)
+		if events.ContentSem.GetValue() >= 0 {
+			gEvent := getEvent(events)
 			if gEvent == nil {
 				fmt.Printf("event is nil\n")
-			}
-
-			if !ok {
-				w.Destroy()
-				break sdlLoop
 			}
 			switch e := gEvent.(type) {
 			case gol.CellFlipped:
