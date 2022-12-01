@@ -2,11 +2,23 @@ package sdl
 
 import (
 	"fmt"
+	"github.com/ChrisGora/semaphore"
 	"github.com/veandco/go-sdl2/sdl"
+	"sync"
 	"uk.ac.bris.cs/gameoflife/gol"
 )
 
-func Run(p gol.Params, events <-chan gol.Event, keyPresses chan<- rune) {
+func getEvent(h gol.SharedData[gol.Event]) gol.Event {
+	event := gol.getData(h)
+	return event
+}
+
+func Run(p gol.Params, events []gol.Event, eventSemaphore semaphore.Semaphore, eventMutex *sync.Mutex, keyPresses chan<- rune) {
+	h := EventHandler{
+		events:    events,
+		mutex:     eventMutex,
+		semaphore: eventSemaphore,
+	}
 	w := NewWindow(int32(p.ImageWidth), int32(p.ImageHeight))
 
 sdlLoop:
@@ -27,13 +39,17 @@ sdlLoop:
 				}
 			}
 		}
-		select {
-		case event, ok := <-events:
+		if h.semaphore.GetValue() >= 0 {
+			gEvent, ok := getEvent(h)
+			if gEvent == nil {
+				fmt.Printf("event is nil\n")
+			}
+
 			if !ok {
 				w.Destroy()
 				break sdlLoop
 			}
-			switch e := event.(type) {
+			switch e := gEvent.(type) {
 			case gol.CellFlipped:
 				w.FlipPixel(e.Cell.X, e.Cell.Y)
 			case gol.TurnComplete:
@@ -42,13 +58,12 @@ sdlLoop:
 				w.Destroy()
 				break sdlLoop
 			default:
-				if len(event.String()) > 0 {
-					fmt.Printf("Completed Turns %-8v%v\n", event.GetCompletedTurns(), event)
+				if len(gEvent.String()) > 0 {
+					fmt.Printf("Completed Turns %-8v%v\n", gEvent.GetCompletedTurns(), event)
 				}
 			}
-		default:
-			break
 		}
+
 	}
 
 }

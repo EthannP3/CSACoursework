@@ -10,11 +10,11 @@ import (
 )
 
 type ioChannels struct {
-	command  <-chan ioCommand
-	idle     chan<- bool
-	filename <-chan string
-	output   <-chan uint8
-	input    chan<- uint8
+	command  SharedData[ioCommand]
+	idle     SharedData[bool]
+	filename SharedData[string]
+	output   SharedData[uint8]
+	input    SharedData[uint8]
 }
 
 // ioState is the internal ioState of the io goroutine.
@@ -37,12 +37,14 @@ const (
 	ioCheckIdle
 )
 
+//
+
 // writePgmImage receives an array of bytes and writes it to a pgm file.
 func (io *ioState) writePgmImage() {
 	_ = os.Mkdir("out", os.ModePerm)
 
 	// Request a filename from the distributor.
-	filename := <-io.channels.filename
+	filename := getData(io.channels.filename)
 
 	file, ioError := os.Create("out/" + filename + ".pgm")
 	util.Check(ioError)
@@ -64,7 +66,7 @@ func (io *ioState) writePgmImage() {
 
 	for y := 0; y < io.params.ImageHeight; y++ {
 		for x := 0; x < io.params.ImageWidth; x++ {
-			val := <-io.channels.output
+			val := getData(io.channels.output)
 			//if val != 0 {
 			//	fmt.Println(x, y)
 			//}
@@ -89,7 +91,7 @@ func (io *ioState) writePgmImage() {
 func (io *ioState) readPgmImage() {
 
 	// Request a filename from the distributor.
-	filename := <-io.channels.filename
+	filename := getData(io.channels.filename)
 
 	data, ioError := ioutil.ReadFile("images/" + filename + ".pgm")
 	util.Check(ioError)
@@ -118,7 +120,7 @@ func (io *ioState) readPgmImage() {
 	image := []byte(fields[4])
 
 	for _, b := range image {
-		io.channels.input <- b
+		putData(io.channels.input, b)
 	}
 
 	fmt.Println("File", filename, "input done!")
@@ -132,17 +134,14 @@ func startIo(p Params, c ioChannels) {
 	}
 
 	for {
-		select {
-		// Block and wait for requests from the distributor
-		case command := <-io.channels.command:
-			switch command {
-			case ioInput:
-				io.readPgmImage()
-			case ioOutput:
-				io.writePgmImage()
-			case ioCheckIdle:
-				io.channels.idle <- true
-			}
+		command := getData(io.channels.command)
+		switch command {
+		case ioInput:
+			io.readPgmImage()
+		case ioOutput:
+			io.writePgmImage()
+		case ioCheckIdle:
+			putData(io.channels.idle, true)
 		}
 	}
 }

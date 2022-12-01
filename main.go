@@ -3,7 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/ChrisGora/semaphore"
 	"runtime"
+	"sync"
 
 	"uk.ac.bris.cs/gameoflife/gol"
 	"uk.ac.bris.cs/gameoflife/sdl"
@@ -50,15 +52,35 @@ func main() {
 	fmt.Println("Height:", params.ImageHeight)
 
 	keyPresses := make(chan rune, 10)
-	events := make(chan gol.Event, 1000)
+	var events []gol.Event
+	eventAvailable := semaphore.Init(1000, 0)
+	spaceAvailable := semaphore.Init(1000, 1000)
+	eventMutex := new(sync.Mutex)
 
-	go gol.Run(params, events, keyPresses)
+	sharedEvents := gol.SharedData[gol.Event]{
+		Value:      &events,
+		Mutex:      eventMutex,
+		ContentSem: eventAvailable,
+		SpaceSem:   spaceAvailable,
+	}
+
+	go gol.Run(params, sharedEvents, keyPresses)
 	if !(*noVis) {
-		sdl.Run(params, events, keyPresses)
+		sdl.Run(params, events, eventAvailable, eventMutex, keyPresses)
 	} else {
 		complete := false
 		for !complete {
-			event := <-events
+			eventAvailable.Wait()
+			eventMutex.Lock()
+			event := events[0]
+			if len(events) > 1 {
+				events = events[1:]
+			} else {
+				events[0] = nil
+			}
+			eventMutex.Unlock()
+			spaceAvailable.Post()
+
 			switch event.(type) {
 			case gol.FinalTurnComplete:
 				complete = true

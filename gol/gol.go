@@ -1,5 +1,10 @@
 package gol
 
+import (
+	"github.com/ChrisGora/semaphore"
+	"sync"
+)
+
 // Params provides the details of how to run the Game of Life and which image to load.
 type Params struct {
 	Turns       int
@@ -8,15 +13,47 @@ type Params struct {
 	ImageHeight int
 }
 
+type SharedData[T any] struct {
+	Value      *[]T
+	Mutex      *sync.Mutex
+	ContentSem semaphore.Semaphore
+	SpaceSem   semaphore.Semaphore
+}
+
 // Run starts the processing of Game of Life. It should initialise channels and goroutines.
-func Run(p Params, events chan<- Event, keyPresses <-chan rune) {
+func Run(p Params, sharedEvents SharedData[Event], keyPresses <-chan rune) {
 
 	//	TODO: Put the missing channels in here.
-	ioCommand := make(chan ioCommand)
-	ioIdle := make(chan bool)
-	ioFilename := make(chan string, 1)
-	ioOutput := make(chan uint8)
-	ioInput := make(chan uint8)
+	ioCommand := SharedData[ioCommand]{
+		Value:      &[]ioCommand{},
+		Mutex:      &sync.Mutex{},
+		ContentSem: semaphore.Init(10, 0),
+		SpaceSem:   semaphore.Init(10, 10),
+	}
+	ioIdle := SharedData[bool]{
+		Value:      &[]bool{},
+		Mutex:      &sync.Mutex{},
+		ContentSem: semaphore.Init(10, 0),
+		SpaceSem:   semaphore.Init(10, 10),
+	}
+	ioFilename := SharedData[string]{
+		Value:      &[]string{},
+		Mutex:      &sync.Mutex{},
+		ContentSem: semaphore.Init(10, 0),
+		SpaceSem:   semaphore.Init(10, 10),
+	}
+	ioOutput := SharedData[uint8]{
+		Value:      &[]uint8{},
+		Mutex:      &sync.Mutex{},
+		ContentSem: semaphore.Init(100, 0),
+		SpaceSem:   semaphore.Init(100, 100),
+	}
+	ioInput := SharedData[uint8]{
+		Value:      &[]uint8{},
+		Mutex:      &sync.Mutex{},
+		ContentSem: semaphore.Init(100, 0),
+		SpaceSem:   semaphore.Init(100, 100),
+	}
 
 	ioChannels := ioChannels{
 		command:  ioCommand,
@@ -28,7 +65,7 @@ func Run(p Params, events chan<- Event, keyPresses <-chan rune) {
 	go startIo(p, ioChannels)
 
 	distributorChannels := distributorChannels{
-		events:     events,
+		events:     sharedEvents,
 		ioCommand:  ioCommand,
 		ioIdle:     ioIdle,
 		ioFilename: ioFilename,
